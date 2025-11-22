@@ -4,18 +4,17 @@ from functools import partial
 
 class VertexColorTool:
     """
-    Maya Vertex Color Tool (v2.1)
+    Maya Vertex Color Tool (v4.0 - Selection Mode Edition)
 
     更新履歴:
-    - [Fix] Scene Colorsが取得できない問題を修正 (中間オブジェクトの除外とカラーセット存在確認)
-    - [New] シーン全体の頂点カラー表示切り替えボタンを追加
-    - [Update] 選択オブジェクトの表示切り替えをトグルボタン化
+    - [New] 選択モード（Object / Vertex）の切り替えラジオボタンを追加
+    - [Update] 指定した頂点カラーを持つコンポーネント（頂点）のみを選択するロジックを実装
     """
 
     def __init__(self):
         self.window_name = "vertexColorToolWindow"
-        self.title = "Vertex Color Assigner"
-        self.size = (320, 660)
+        self.title = "Vertex Color Tool"
+        self.size = (360, 720)
 
         # データ初期化
         self.current_color = [0.5, 0.5, 0.5]
@@ -42,7 +41,7 @@ class VertexColorTool:
 
         self.widgets = {}
         self.build_ui()
-        self.refresh_color_list()
+        self.refresh_scene_colors()
 
     def build_ui(self):
         if cmds.window(self.window_name, exists=True):
@@ -72,16 +71,17 @@ class VertexColorTool:
         )
         col_layout = cmds.columnLayout(adjustableColumn=True)
 
+        row_sel = cmds.rowLayout(
+            numberOfColumns=2, adjustableColumn=2, columnWidth2=(60, 100), p=col_layout
+        )
         self.widgets["swatch"] = cmds.canvas(
-            width=50,
-            height=45,
+            width=60,
+            height=50,
             rgbValue=self.current_color,
             pressCommand=self.open_color_picker,
             annotation="Click to open Color Editor",
-            p=col_layout,
+            p=row_sel,
         )
-
-        cmds.separator(h=5, style="none")
 
         self.widgets["color_field"] = cmds.floatFieldGrp(
             label="",
@@ -92,24 +92,23 @@ class VertexColorTool:
             value2=self.current_color[1],
             value3=self.current_color[2],
             changeCommand=self.on_field_changed,
-            p=col_layout,
+            p=row_sel,
         )
-        cmds.setParent(main_col)
 
-        # --- Actions ---
-        cmds.separator(h=5, style="none", p=main_col)
+        cmds.setParent(col_layout)
+        cmds.separator(h=5, style="none")
         cmds.button(
             label="Apply Color to Selection",
             command=self.apply_color,
-            p=main_col,
             height=40,
             bgc=(0.3, 0.5, 0.3),
         )
+        cmds.setParent(main_col)
 
         # --- Palette ---
         cmds.separator(h=5, style="in", p=main_col)
         cmds.text(
-            label="Color Palette:", align="left", font="boldLabelFont", p=main_col
+            label="Quick Palette:", align="left", font="boldLabelFont", p=main_col
         )
 
         p_btn_layout = cmds.rowLayout(numberOfColumns=2, adjustableColumn=1, p=main_col)
@@ -121,35 +120,45 @@ class VertexColorTool:
         )
         self.refresh_palette_ui()
 
-        # --- Scene Colors ---
+        # --- Scene Colors (Visual List) ---
         cmds.separator(h=15, style="in", p=main_col)
+
+        # Header Row with Refresh Button
+        header_row = cmds.rowLayout(numberOfColumns=2, adjustableColumn=1, p=main_col)
         cmds.text(
-            label="Scene Colors (Used in Meshes):",
-            align="left",
-            font="boldLabelFont",
-            p=main_col,
+            label="Scene Colors:", align="left", font="boldLabelFont", p=header_row
         )
-
-        self.widgets["scene_list"] = cmds.textScrollList(
-            allowMultiSelection=False,
-            height=120,
-            selectCommand=self.on_scene_list_selected,
-            p=main_col,
-        )
-
-        btn_grid = cmds.rowLayout(numberOfColumns=2, adjustableColumn=True, p=main_col)
-        cmds.button(label="Refresh List", command=self.refresh_color_list, p=btn_grid)
         cmds.button(
-            label="Select Objects", command=self.select_objects_by_color, p=btn_grid
+            label="Refresh List",
+            command=self.refresh_scene_colors,
+            width=80,
+            p=header_row,
         )
 
-        # --- Display Settings (Modified) ---
+        # Selection Mode Radio Buttons (New)
+        cmds.separator(h=5, style="none", p=main_col)
+        self.widgets["select_mode"] = cmds.radioButtonGrp(
+            label="Target: ",
+            labelArray2=["Object", "Vertex"],
+            numberOfRadioButtons=2,
+            select=1,  # Default to Object mode
+            columnWidth3=(40, 70, 70),
+            p=main_col,
+        )
+
+        # List Container
+        cmds.frameLayout(labelVisible=False, p=main_col, borderStyle="etchedIn")
+        self.widgets["scene_list_layout"] = cmds.columnLayout(
+            adjustableColumn=True, rowSpacing=1
+        )
+        cmds.setParent(main_col)
+
+        # --- Display Settings ---
         cmds.separator(h=15, style="in", p=main_col)
         cmds.text(
             label="Display Settings:", align="left", font="boldLabelFont", p=main_col
         )
 
-        # 選択オブジェクトのトグル
         cmds.button(
             label="Toggle Display (Selection)",
             command=self.toggle_selection_display,
@@ -157,7 +166,6 @@ class VertexColorTool:
             h=30,
         )
 
-        # シーン全体の制御
         scene_disp_grid = cmds.rowLayout(
             numberOfColumns=2, adjustableColumn=True, p=main_col
         )
@@ -202,17 +210,6 @@ class VertexColorTool:
         b = cmds.floatFieldGrp(self.widgets["color_field"], query=True, value3=True)
         self.set_color([r, g, b], update_field=False)
 
-    def on_scene_list_selected(self):
-        selected = cmds.textScrollList(
-            self.widgets["scene_list"], query=True, selectItem=True
-        )
-        if selected:
-            try:
-                rgb = [float(c.strip()) for c in selected[0].split(",")]
-                self.set_color(rgb)
-            except ValueError:
-                pass
-
     # ==========================================
     # Palette Logic
     # ==========================================
@@ -242,7 +239,165 @@ class VertexColorTool:
             )
 
     # ==========================================
-    # Vertex Color Operations
+    # Scene Color Logic (Selection Mode Supported)
+    # ==========================================
+
+    def get_scene_colors(self):
+        scene_colors = set()
+        meshes = cmds.ls(type="mesh", noIntermediate=True, long=True) or []
+
+        for mesh in meshes:
+            if cmds.polyEvaluate(mesh, vertex=True) == 0:
+                continue
+            if not cmds.polyColorSet(mesh, query=True, allColorSets=True):
+                continue
+
+            try:
+                colors = cmds.polyColorPerVertex(f"{mesh}.vtx[*]", query=True, rgb=True)
+                if not colors:
+                    continue
+
+                for i in range(0, len(colors), 3):
+                    c = tuple(round(v, 3) for v in colors[i : i + 3])
+                    scene_colors.add(c)
+            except Exception:
+                pass
+
+        return sorted(list(scene_colors))
+
+    def refresh_scene_colors(self, *args):
+        unique_colors = self.get_scene_colors()
+
+        children = cmds.columnLayout(
+            self.widgets["scene_list_layout"], query=True, childArray=True
+        )
+        if children:
+            for child in children:
+                cmds.deleteUI(child)
+
+        if not unique_colors:
+            cmds.text(
+                label="No vertex colors found.",
+                parent=self.widgets["scene_list_layout"],
+                align="center",
+                h=20,
+            )
+            return
+
+        for rgb in unique_colors:
+            self.create_scene_color_row(rgb)
+
+        print(f"Scene colors refreshed: {len(unique_colors)} colors found.")
+
+    def create_scene_color_row(self, rgb):
+        row = cmds.rowLayout(
+            numberOfColumns=3,
+            columnWidth3=(40, 90, 60),
+            adjustableColumn=2,
+            parent=self.widgets["scene_list_layout"],
+            bgc=(0.2, 0.2, 0.2),
+        )
+
+        # 1. Swatch
+        cmds.canvas(
+            width=20,
+            height=20,
+            rgbValue=rgb,
+            pressCommand=partial(self.set_color, list(rgb)),
+            annotation="Click to pick this color",
+        )
+
+        # 2. Text
+        label_text = f" {rgb[0]:.2f}, {rgb[1]:.2f}, {rgb[2]:.2f}"
+        cmds.text(label=label_text, align="left")
+
+        # 3. Select Button
+        cmds.button(
+            label="Select",
+            height=20,
+            command=partial(self.select_by_color, rgb),
+            annotation="Select objects or vertices with this color",
+        )
+
+    def select_by_color(self, target_rgb, *args):
+        """モードに応じてオブジェクトまたは頂点を選択"""
+
+        # 現在のモードを取得 (1=Object, 2=Vertex)
+        mode_idx = cmds.radioButtonGrp(
+            self.widgets["select_mode"], query=True, select=True
+        )
+        is_vertex_mode = mode_idx == 2
+
+        target_r = tuple(round(v, 3) for v in target_rgb)
+
+        cmds.select(clear=True)
+
+        selection_list = []
+
+        meshes = cmds.ls(type="mesh", noIntermediate=True, long=True) or []
+
+        # プログレスバー表示（メッシュが多い場合用）
+        amount = len(meshes)
+
+        for mesh in meshes:
+            if not cmds.polyColorSet(mesh, query=True, allColorSets=True):
+                continue
+
+            # 頂点カラーを一括取得
+            colors = cmds.polyColorPerVertex(f"{mesh}.vtx[*]", query=True, rgb=True)
+            if not colors:
+                continue
+
+            # RGBリストを (r,g,b) タプルのリストに変換しつつ、ループ処理
+            # colorsはフラットなリスト [r,g,b, r,g,b, ...]
+
+            if is_vertex_mode:
+                # --- Vertex Mode Logic ---
+                # マッチする頂点インデックスを探す
+                matched_indices = []
+                for i in range(0, len(colors), 3):
+                    c = tuple(round(v, 3) for v in colors[i : i + 3])
+                    if c == target_r:
+                        # インデックスは (i / 3)
+                        matched_indices.append(i // 3)
+
+                # インデックスから選択文字列を生成 (例: pCube1.vtx[5])
+                if matched_indices:
+                    # 最適化: 連続するインデックスをスライス表記にできればベストだが、
+                    # ここではシンプルにリスト内包表記で文字列化
+                    for idx in matched_indices:
+                        selection_list.append(f"{mesh}.vtx[{idx}]")
+
+            else:
+                # --- Object Mode Logic ---
+                # 1つでもマッチすればそのオブジェクトを選択候補へ
+                found = False
+                for i in range(0, len(colors), 3):
+                    c = tuple(round(v, 3) for v in colors[i : i + 3])
+                    if c == target_r:
+                        found = True
+                        break
+
+                if found:
+                    transform = cmds.listRelatives(mesh, parent=True, fullPath=True)
+                    if transform:
+                        selection_list.append(transform[0])
+
+        # 選択実行
+        if selection_list:
+            cmds.select(selection_list)
+            mode_str = "Vertices" if is_vertex_mode else "Objects"
+            print(f"Selected {len(selection_list)} {mode_str} with color {target_rgb}")
+
+            # Vertexモードの場合、自動的にコンポーネントモードに切り替えると親切
+            if is_vertex_mode:
+                cmds.selectMode(component=True)
+                cmds.selectType(vertex=True, allObjects=False)
+        else:
+            cmds.warning(f"No items found with color {target_rgb}")
+
+    # ==========================================
+    # Application & Display
     # ==========================================
 
     def apply_color(self, *args):
@@ -255,100 +410,15 @@ class VertexColorTool:
                 selection, rgb=self.current_color, colorDisplayOption=True
             )
             print(f"Applied color {self.current_color}")
-            self.refresh_color_list()
         except Exception as e:
             cmds.warning(f"Error applying color: {e}")
 
-    def refresh_color_list(self, *args):
-        """シーン内の使用カラーリストを更新 (修正版)"""
-        cmds.textScrollList(self.widgets["scene_list"], edit=True, removeAll=True)
-        scene_colors = set()
-
-        # [修正1] noIntermediate=True でヒストリ用の中間メッシュを除外
-        meshes = cmds.ls(type="mesh", noIntermediate=True, long=True) or []
-
-        for mesh in meshes:
-            # 頂点数の簡易チェック
-            if cmds.polyEvaluate(mesh, vertex=True) == 0:
-                continue
-
-            # [修正2] カラーセットが存在しないメッシュはスキップ (これがエラーの主原因になりやすい)
-            color_sets = cmds.polyColorSet(mesh, query=True, allColorSets=True)
-            if not color_sets:
-                continue
-
-            try:
-                # 頂点カラー取得
-                colors = cmds.polyColorPerVertex(f"{mesh}.vtx[*]", query=True, rgb=True)
-                if not colors:
-                    continue
-
-                for i in range(0, len(colors), 3):
-                    c = tuple(round(v, 3) for v in colors[i : i + 3])
-                    scene_colors.add(c)
-            except Exception:
-                # 万が一特定メッシュで失敗しても全体を止めない
-                pass
-
-        for c in sorted(list(scene_colors)):
-            cmds.textScrollList(
-                self.widgets["scene_list"],
-                edit=True,
-                append=f"{c[0]:.3f}, {c[1]:.3f}, {c[2]:.3f}",
-            )
-
-        print(f"Refreshed list: Found {len(scene_colors)} unique colors.")
-
-    def select_objects_by_color(self, *args):
-        selected = cmds.textScrollList(
-            self.widgets["scene_list"], query=True, selectItem=True
-        )
-        if not selected:
-            return
-
-        try:
-            target = tuple(float(x) for x in selected[0].split(","))
-        except:
-            return
-
-        cmds.select(clear=True)
-        to_select = []
-
-        meshes = cmds.ls(type="mesh", noIntermediate=True, long=True) or []
-        for mesh in meshes:
-            # カラーセットがないメッシュは検索対象外
-            if not cmds.polyColorSet(mesh, query=True, allColorSets=True):
-                continue
-
-            colors = cmds.polyColorPerVertex(f"{mesh}.vtx[*]", query=True, rgb=True)
-            if not colors:
-                continue
-
-            for i in range(0, len(colors), 3):
-                c = tuple(round(v, 3) for v in colors[i : i + 3])
-                target_r = tuple(round(v, 3) for v in target)
-                if c == target_r:
-                    transform = cmds.listRelatives(mesh, parent=True, fullPath=True)
-                    if transform:
-                        to_select.append(transform[0])
-                    break
-
-        if to_select:
-            cmds.select(to_select)
-            print(f"Selected {len(to_select)} objects.")
-
-    # ==========================================
-    # Display Settings (New & Updated)
-    # ==========================================
-
     def toggle_selection_display(self, *args):
-        """選択オブジェクトの表示状態をトグル（反転）する"""
         selection = cmds.ls(selection=True, long=True)
         if not selection:
             cmds.warning("Select objects to toggle display.")
             return
 
-        # ターゲットとなるメッシュ（シェイプ）を収集
         target_shapes = []
         for item in selection:
             if cmds.nodeType(item) == "transform":
@@ -363,8 +433,6 @@ class VertexColorTool:
         if not target_shapes:
             return
 
-        # 最初のオブジェクトの状態を確認して、ターゲット状態を決める（同期させるため）
-        # 最初のオブジェクトがONなら、全てOFFにする。OFFなら全てONにする。
         first_state = cmds.getAttr(f"{target_shapes[0]}.displayColors")
         new_state = not first_state
 
@@ -372,19 +440,15 @@ class VertexColorTool:
             cmds.setAttr(f"{shape}.displayColors", new_state)
 
         state_str = "ON" if new_state else "OFF"
-        print(f"Toggled selection vertex color display to: {state_str}")
+        print(f"Toggled display to: {state_str}")
 
     def set_scene_display(self, enable, *args):
-        """シーン内の全メッシュの頂点カラー表示を一括設定"""
         meshes = cmds.ls(type="mesh", noIntermediate=True, long=True)
         if not meshes:
             return
-
         for mesh in meshes:
             cmds.setAttr(f"{mesh}.displayColors", enable)
-
-        state_str = "ON" if enable else "OFF"
-        print(f"Set ALL scene objects vertex color display to: {state_str}")
+        print(f"Set scene display to: {'ON' if enable else 'OFF'}")
 
 
 # 実行

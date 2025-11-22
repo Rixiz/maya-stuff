@@ -3,6 +3,7 @@
 import maya.cmds as cmds
 import re
 
+
 def lock_selected_vertices(*args):
     """
     Locks the transformation of the currently selected vertices.
@@ -10,7 +11,7 @@ def lock_selected_vertices(*args):
     # Get the selected components as a flattened list
     # e.g., ['pCube1.vtx[0]', 'pCube1.vtx[1]', ... ]
     selected_vertices = cmds.ls(selection=True, flatten=True)
-    
+
     if not selected_vertices:
         cmds.warning("No vertices are selected.")
         return
@@ -21,11 +22,11 @@ def lock_selected_vertices(*args):
         if ".vtx[" in vtx_component:
             # Use regex to extract the object name and vertex index
             # e.g., 'pCube1.vtx[123]' -> obj='pCube1', index='123'
-            match = re.search(r'(.+)\.vtx\[(\d+)\]', vtx_component)
+            match = re.search(r"(.+)\.vtx\[(\d+)\]", vtx_component)
             if match:
                 object_name = match.group(1)
                 vertex_index = match.group(2)
-                
+
                 # Get the shape node from the object name
                 shapes = cmds.listRelatives(object_name, shapes=True, path=True)
                 if not shapes:
@@ -58,7 +59,7 @@ def unlock_all_vertices_on_object(*args):
     if not selected_objects:
         cmds.warning("No objects are selected.")
         return
-        
+
     unlocked_obj_count = 0
     for obj in selected_objects:
         # Get the shape node from the object
@@ -66,9 +67,9 @@ def unlock_all_vertices_on_object(*args):
         if not shapes:
             print(f"Skipping {obj}: No polygon shape found.")
             continue
-        
+
         shape_name = shapes[0]
-        
+
         # Get the total number of vertices for the object
         try:
             num_vertices = cmds.polyEvaluate(shape_name, vertex=True)
@@ -86,10 +87,10 @@ def unlock_all_vertices_on_object(*args):
             except Exception as e:
                 # Ignore errors, e.g., if already unlocked
                 pass
-        
+
         print(f"Success: Unlocked all vertices on {obj}.")
         unlocked_obj_count += 1
-    
+
     if unlocked_obj_count == 0:
         cmds.warning("No valid objects found to unlock.")
 
@@ -104,15 +105,24 @@ def create_vertex_locker_ui():
         cmds.deleteUI(window_id)
 
     cmds.window(window_id, title="Vertex Locker", widthHeight=(70, 140))
-    cmds.columnLayout(adjustableColumn=True, rowSpacing=1, columnAttach=('both', 0))
+    cmds.columnLayout(adjustableColumn=True, rowSpacing=1, columnAttach=("both", 0))
 
-    cmds.button(label="Lock Selected Vertices", command=lock_selected_vertices, height=25, 
-                backgroundColor=(0.8, 0.4, 0.4))
-    
-    cmds.button(label="Unlock All on Object", command=unlock_all_vertices_on_object, height=25,
-                backgroundColor=(0.4, 0.8, 0.4))
+    cmds.button(
+        label="Lock Selected Vertices",
+        command=lock_selected_vertices,
+        height=25,
+        backgroundColor=(0.8, 0.4, 0.4),
+    )
+
+    cmds.button(
+        label="Unlock All on Object",
+        command=unlock_all_vertices_on_object,
+        height=25,
+        backgroundColor=(0.4, 0.8, 0.4),
+    )
 
     cmds.showWindow(window_id)
+
 
 # --- Run the script ---
 if __name__ == "__main__":
