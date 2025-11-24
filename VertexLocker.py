@@ -104,7 +104,14 @@ def create_vertex_locker_ui():
     if cmds.window(window_id, exists=True):
         cmds.deleteUI(window_id)
 
-    cmds.window(window_id, title="Vertex Locker", widthHeight=(70, 140))
+    cmds.window(
+        window_id,
+        title="Vertex Locker",
+        widthHeight=(70, 140),
+        mxb=False,
+        mnb=False,
+        tlb=True,
+    )
     cmds.columnLayout(adjustableColumn=True, rowSpacing=1, columnAttach=("both", 0))
 
     cmds.button(

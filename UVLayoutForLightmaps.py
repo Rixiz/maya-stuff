@@ -156,6 +156,9 @@ def build_ui():
         title="Lightmap UV Layout Tool",
         widthHeight=(380, 500),
         sizeable=True,
+        mxb=False,
+        mnb=False,
+        tlb=True,
     )
     cmds.columnLayout(
         adjustableColumn=True,
